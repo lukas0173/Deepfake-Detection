@@ -10,4 +10,4 @@ wheels/
 .venv
 
 # dataset
-dataset
+dataset/Celeb-DF-v2
