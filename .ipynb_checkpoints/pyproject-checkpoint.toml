@@ -9,7 +9,6 @@ dependencies = [
     "numpy>=2.3.3",
     "opencv-python>=4.11.0.86",
     "pandas>=2.3.2",
-    "pandoc>=2.4",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
 ]
