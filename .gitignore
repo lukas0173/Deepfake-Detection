@@ -11,3 +11,6 @@ wheels/
 
 # dataset
 dataset/Celeb-DF-v2
+
+# Kaggle credential
+.kaggle
