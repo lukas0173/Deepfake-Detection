@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11.9"
 dependencies = [
     "black>=25.9.0",
+    "facenet-pytorch>=2.5.3",
     "isort>=6.1.0",
     "jupyter>=1.1.1",
     "jupyterlab-code-formatter>=3.0.2",
@@ -17,6 +18,7 @@ dependencies = [
     "pandoc>=2.4",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
+    "torchvision>=0.23.0",
 ]
 
 [dependency-groups]
