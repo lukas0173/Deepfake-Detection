@@ -30,7 +30,9 @@ class DeepfakeDataset(Dataset):
         # Initialize MTCNN here. Note: This can be slow.
         # If performance is an issue, consider passing a pre-initialized MTCNN object.
         self.mtcnn = MTCNN(
-            image_size=self.image_size, margin=20, device=self.device, post_process=False
+            image_size=self.image_size,
+            margin=20,
+            post_process=False
         )
 
         # Logging setup for multiprocessing
@@ -94,7 +96,7 @@ class DeepfakeDataset(Dataset):
                 return None
             faces_tensor = torch.stack(faces_tensor)
 
-        return faces_tensor.to(self.device)
+        return faces_tensor
 
     def __getitem__(self, idx):
         with self.lock:
