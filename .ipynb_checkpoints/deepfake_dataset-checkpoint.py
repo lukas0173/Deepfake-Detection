@@ -16,7 +16,7 @@ class DeepfakeDataset(Dataset):
         self,
         metadata_df,
         transform=None,
-        frames_per_video=30,
+        frames_per_video=20,
         image_size=224,
         log_interval=100,
     ):
