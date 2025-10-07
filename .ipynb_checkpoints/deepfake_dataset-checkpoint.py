@@ -32,7 +32,9 @@ class DeepfakeDataset(Dataset):
         self.mtcnn = MTCNN(
             image_size=self.image_size,
             margin=20,
-            post_process=False
+            post_process=False,
+            device=self.device,
+            select_largest=False  # Handle multiple faces per frame
         )
 
         # Logging setup for multiprocessing
@@ -80,22 +82,34 @@ class DeepfakeDataset(Dataset):
         if not frames_to_process:
             logging.warning(f"Could not read any frames from {video_path}. Skipping.")
             return None
-
+        
+        faces_list = []
         try:
-            faces_tensor = self.mtcnn(frames_to_process)
+            # Process each frame individually for maximum stability
+            for frame in frames_to_process:
+                detected_faces = self.mtcnn(frame)
+                faces_list.append(detected_faces)
         except Exception as e:
-            logging.error(f"Batch face extraction failed for {video_path} with error: {e}")
+            logging.error(f"Face extraction failed for a frame in {video_path} with error: {e}")
             return None
-
-        if faces_tensor is None:
+        
+        # The rest of the logic to process 'faces_list' (renamed from faces_tensor)
+        # should handle the list of tensors/None values correctly, as we developed.
+        if not any(face is not None for face in faces_list):
             return None
-
-        if isinstance(faces_tensor, list):
-            faces_tensor = [face for face in faces_tensor if face is not None]
-            if not faces_tensor:
-                return None
-            faces_tensor = torch.stack(faces_tensor)
-
+        
+        processed_faces = []
+        for face in faces_list:
+            if face is not None:
+                if isinstance(face, list) and len(face) > 0:
+                    processed_faces.append(face[0])
+                elif not isinstance(face, list):
+                    processed_faces.append(face)
+        
+        if not processed_faces:
+            return None
+        
+        faces_tensor = torch.stack(processed_faces)
         return faces_tensor
 
     def __getitem__(self, idx):
