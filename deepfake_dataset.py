@@ -139,9 +139,11 @@ class DeepfakeDataset(Dataset):
         if faces.shape[0] > self.frames_per_video:
             faces = faces[:self.frames_per_video]
 
+        # Apply transforms to each frame individually
         if self.transform:
-            transformed_faces = [self.transform(face) for face in faces]
-            faces = torch.stack(transformed_faces)
+            transformed_faces = torch.stack([self.transform(frame) for frame in faces])
+        else:
+            transformed_faces = faces
 
         if torch.isnan(faces).any() or torch.isinf(faces).any():
             logging.warning(f"NaN or Inf detected in face tensor for {video_path}. Skipping sample.")
