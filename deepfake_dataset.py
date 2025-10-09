@@ -9,8 +9,6 @@ from torch.utils.data import Dataset
 import multiprocessing
 
 
-
-
 class DeepfakeDataset(Dataset):
     def __init__(
         self,
@@ -34,7 +32,8 @@ class DeepfakeDataset(Dataset):
             margin=20,
             post_process=False,
             device=self.device,
-            select_largest=False  # Handle multiple faces per frame
+            select_largest=True  # Handle multiple faces per frame,
+            selection_method="probability"  # Select the face with the highest confidence
         )
 
         # Logging setup for multiprocessing
