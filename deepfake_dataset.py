@@ -32,7 +32,7 @@ class DeepfakeDataset(Dataset):
             margin=20,
             post_process=False,
             device=self.device,
-            select_largest=True  # Handle multiple faces per frame,
+            select_largest=True,  # Handle multiple faces per frame,
             selection_method="probability"  # Select the face with the highest confidence
         )
 
