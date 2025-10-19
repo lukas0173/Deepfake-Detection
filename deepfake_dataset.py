@@ -22,18 +22,16 @@ class DeepfakeDataset(Dataset):
         self.transform = transform
         self.frames_per_video = frames_per_video
         self.image_size = image_size
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Initialize MTCNN here. Note: This can be slow.
         # If performance is an issue, consider passing a pre-initialized MTCNN object.
         self.mtcnn = MTCNN(
             image_size=self.image_size,
             margin=20,
-            post_process=False,
             device=self.device,
-            select_largest=True,  # Handle multiple faces per frame,
-            selection_method="probability"  # Select the face with the highest confidence
+            min_face_size=20,  # Ignores tiny, unlikely face detections
+            thresholds=[0.6, 0.7, 0.7],  # Standard confidence thresholds
         )
 
         # Logging setup for multiprocessing
@@ -47,18 +45,18 @@ class DeepfakeDataset(Dataset):
     def extract_faces_from_video(self, video_path):
         if not os.path.exists(video_path):
             logging.warning(f"Video file not found: {video_path}")
-            return None
+            return []
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             logging.error(f"Failed to open video: {video_path}")
-            return None
+            return []
 
+        # --- Frame selection logic (no changes here) ---
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if frame_count < 1:
-            logging.warning(f"Video has zero frames: {video_path}. Skipping.")
             cap.release()
-            return None
+            return []
 
         if frame_count > self.frames_per_video:
             frame_indices = np.linspace(
@@ -67,6 +65,7 @@ class DeepfakeDataset(Dataset):
         else:
             frame_indices = np.arange(frame_count)
 
+        # --- Frame extraction and conversion to PIL (no changes here) ---
         frames_to_process = []
         for frame_idx in frame_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -75,41 +74,37 @@ class DeepfakeDataset(Dataset):
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_image = Image.fromarray(frame_rgb)
                 frames_to_process.append(pil_image)
-
         cap.release()
 
         if not frames_to_process:
-            logging.warning(f"Could not read any frames from {video_path}. Skipping.")
-            return None
-        
-        faces_list = []
+            return []
+
+        # --- NEW: Two-step face detection, cropping, and resizing ---
+        extracted_face_images = []
         try:
-            # Process each frame individually for maximum stability
-            for frame in frames_to_process:
-                detected_faces = self.mtcnn(frame)
-                faces_list.append(detected_faces)
+            for frame_pil in frames_to_process:
+                boxes, probs = self.mtcnn.detect(frame_pil)
+
+                if boxes is not None and len(boxes) > 0:
+                    best_face_index = np.argmax(probs)
+                    best_face_prob = probs[best_face_index]
+
+                    if best_face_prob > 0.90:  # Confidence threshold
+                        box = boxes[best_face_index]
+                        face = frame_pil.crop(box)
+                        face_resized = face.resize((self.image_size, self.image_size))
+                        extracted_face_images.append(face_resized)
+                    else:
+                        extracted_face_images.append(None)
+                else:
+                    extracted_face_images.append(None)
         except Exception as e:
-            logging.error(f"Face extraction failed for a frame in {video_path} with error: {e}")
-            return None
-        
-        # The rest of the logic to process 'faces_list' (renamed from faces_tensor)
-        # should handle the list of tensors/None values correctly, as we developed.
-        if not any(face is not None for face in faces_list):
-            return None
-        
-        processed_faces = []
-        for face in faces_list:
-            if face is not None:
-                if isinstance(face, list) and len(face) > 0:
-                    processed_faces.append(face[0])
-                elif not isinstance(face, list):
-                    processed_faces.append(face)
-        
-        if not processed_faces:
-            return None
-        
-        faces_tensor = torch.stack(processed_faces)
-        return faces_tensor
+            logging.error(f"Face extraction failed for {video_path} with error: {e}")
+            return []
+
+        # Filter out frames where no good face was found
+        valid_face_images = [f for f in extracted_face_images if f is not None]
+        return valid_face_images
 
     def __getitem__(self, idx):
         with self.lock:
@@ -122,33 +117,38 @@ class DeepfakeDataset(Dataset):
         video_path = row["filepath"]
         label = 1 if row["label"] == "fake" else 0
 
-        faces = self.extract_faces_from_video(video_path)
+        face_images = self.extract_faces_from_video(video_path)
 
-        if faces is None:
-            logging.warning(f"No faces were extracted for {video_path}. Skipping this sample.")
-            return None
+        if not face_images:
+            logging.warning(f"No valid faces found for {video_path}. Skipping sample.")
+            return None  # collate_fn will handle this
 
-        num_detected_faces = faces.shape[0]
+        num_detected_faces = len(face_images)
         if num_detected_faces < self.frames_per_video:
             shortfall = self.frames_per_video - num_detected_faces
-            last_face = faces[-1].unsqueeze(0)
-            padding = last_face.repeat(shortfall, 1, 1, 1)
-            faces = torch.cat([faces, padding], dim=0)
+            last_face_image = face_images[-1]
+            face_images.extend([last_face_image] * shortfall)
 
-        if faces.shape[0] > self.frames_per_video:
-            faces = faces[:self.frames_per_video]
+        if len(face_images) > self.frames_per_video:
+            face_images = face_images[: self.frames_per_video]
 
-        # Apply transforms to each frame individually
+        # --- Apply transforms and stack into a single tensor ---
         if self.transform:
-            transformed_faces = torch.stack([self.transform(frame) for frame in faces])
+            faces_tensor = torch.stack([self.transform(img) for img in face_images])
         else:
-            transformed_faces = faces
+            # Fallback to just converting to tensor if no transform is provided
+            from torchvision import transforms as T
 
-        if torch.isnan(faces).any() or torch.isinf(faces).any():
-            logging.warning(f"NaN or Inf detected in face tensor for {video_path}. Skipping sample.")
+            faces_tensor = torch.stack([T.ToTensor()(img) for img in face_images])
+
+        if torch.isnan(faces_tensor).any() or torch.isinf(faces_tensor).any():
+            logging.warning(
+                f"NaN or Inf detected in tensor for {video_path}. Skipping."
+            )
             return None
 
-        return faces, torch.tensor(label, dtype=torch.float32)
+        return faces_tensor, torch.tensor(label, dtype=torch.float32)
+
 
 def collate_fn(batch):
     """
@@ -160,6 +160,6 @@ def collate_fn(batch):
     if not batch:
         # If the entire batch failed, return empty tensors
         return torch.tensor([]), torch.tensor([])
-    
+
     # Use the default collate function on the cleaned batch
     return torch.utils.data.dataloader.default_collate(batch)
